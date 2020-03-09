@@ -16,7 +16,7 @@ export interface StrapiPluginOptions {
     allowedTypes?: string[];
     excludedTypes?: string[];
     loginData?: LoginData;
-    queryLimit?: number;
+    pageSize?: number;
     plugins?: unknown[];
 }
 
@@ -325,16 +325,16 @@ export default class StrapiSourcePlugin {
         }
         else {
             const endpoint = pluralize(contentType.apiID);
-            const queryLimit = this.options.queryLimit || DEFAULT_QUERY_LIMIT;
+            const pageSize = this.options.pageSize || DEFAULT_QUERY_LIMIT;
             let index = 0;
             let result: StrapiEntity[] = [];
             while (true) {
-                const query = `${endpoint}?_limit=${queryLimit}&_start=${index}`;
+                const query = `${endpoint}?_limit=${pageSize}&_start=${index}`;
                 const response = await this.fetch<StrapiEntity[]>(query);
                 result.push(...response);
-                if (response.length < queryLimit)
+                if (response.length < pageSize)
                     return result;
-                index += queryLimit;
+                index += pageSize;
             }
         }
     }

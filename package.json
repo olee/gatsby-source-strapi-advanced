@@ -2,26 +2,40 @@
   "name": "@olee92/gatsby-source-strapi",
   "description": "Gatsby source plugin for strapi servers",
   "author": "Björn Zeutzheim <npm@bzeutzheim.de> (https://github.com/olee)",
-  "license": "ISC",
-  "version": "0.0.1",
+  "license": "MIT",
+  "version": "0.0.2",
+  "repository": "https://github.com/olee/gatsby-source-strapi-advanced",
+  "keywords": [
+    "gatsby",
+    "source",
+    "plugin",
+    "strapi"
+  ],
   "scripts": {
     "test": "ts-node test/test.ts",
+    "prepublish": "npm run build",
+    "pub": "npm publish --access public",
     "build": "tsc"
+  },
+  "dependencies": {
+    "axios": "^0.19.2",
+    "gatsby-node-helpers": "^0.3.0",
+    "pluralize": "^8.0.0"
+  },
+  "peerDependencies": {
+    "gatsby-source-filesystem": "^2.1"
   },
   "devDependencies": {
     "@types/axios": "^0.14.0",
     "@types/pluralize": "0.0.29",
     "gatsby": "^2.19.32",
     "gatsby-source-filesystem": "^2.1.50",
-    "pluralize": "^8.0.0",
     "ts-node": "^8.6.2",
     "typescript": "^3.8.3"
   },
-  "peerDependencies": {
-    "gatsby-source-filesystem": "^2.1"
-  },
-  "dependencies": {
-    "axios": "^0.19.2",
-    "gatsby-node-helpers": "^0.3.0"
-  }
+  "files": [
+    "README.md",
+    "*.js",
+    "*.js.map"
+  ]
 }
