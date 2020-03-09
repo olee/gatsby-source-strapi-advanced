@@ -15,7 +15,7 @@ export interface Schema {
     collectionName: string;
     info: SchemaInfo;
     options: SchemaOptions;
-    attributes: Attribute[];
+    attributes: Record<string, Attribute>;
     connection: string; // 'default'
 }
 
