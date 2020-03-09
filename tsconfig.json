@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",
+    "module": "commonjs",
+    "outDir": "./",
+    "rootDir": "./src",
+    // "importHelpers": true,
+    
+    /* Strict Type-Checking Options */
+    "strict": true,
+    // "noUnusedLocals": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    // "noImplicitReturns": true,
+    
+    /* Module Resolution Options */
+    "baseUrl": "./src",
+    "esModuleInterop": true,                  /* Enables emit interoperability between CommonJS and ES Modules via creation of namespace objects for all imports. Implies 'allowSyntheticDefaultImports'. */
+    
+    /* Source Map Options */
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": []
+}
