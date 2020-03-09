@@ -15,7 +15,7 @@
     "test": "ts-node test/test.ts",
     "prepublish": "npm run build",
     "pub": "npm publish --access public",
-    "build": "tsc"
+    "build": "npx -q shx rm *.js && tsc"
   },
   "dependencies": {
     "axios": "^0.19.2",

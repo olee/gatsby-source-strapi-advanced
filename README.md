@@ -27,7 +27,6 @@ export default { plugins: [
         options: {
             apiURL: 'http://localhost:1337',
             pageSize: 100,
-            allowedTypes: null;
             excludedTypes: ['user', 'role', 'permission'];
             loginData: {
                 identifier: "identifier",
@@ -38,13 +37,13 @@ export default { plugins: [
 ]}
 ```
 
-| **option**    | **defaultValue**                    | **description**                                                                                                                 |
-|---------------|-------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
-| apiURL        | http://localhost:1337               | URL to access Strapi API                                                                                                        |
-| pageSize      | 100                                 | The plugin will repeatedly fetch these many entries per query, until all entities have been loaded                              |
-| allowedTypes  | undefined                           | If specified, only these content-types are sourced                                                                              |
-| excludedTypes | `['user' , 'role' , 'permission' ]` | Exclude these content-types from all available content-types to source                                                          |
-| loginData     | undefined                           | Provide object with properties `identifier` and `password` to be able to access Strapi servers where authentication is required |
+| **option**    | **defaultValue**                    | **type** | **description**                                                                                                                 |
+|---------------|-------------------------------------|----------|---------------------------------------------------------------------------------------------------------------------------------|
+| apiURL        | http://localhost:1337               | string   | URL to access Strapi API                                                                                                        |
+| pageSize      | 100                                 | number   | The plugin will repeatedly fetch these many entries per query, until all entities have been loaded                              |
+| allowedTypes  | undefined                           | string[] | If specified, only these content-types are sourced                                                                              |
+| excludedTypes | `['user' , 'role' , 'permission' ]` | string[] | Exclude these content-types from all available content-types to source                                                          |
+| loginData     | undefined                           | object   | Provide object with properties `identifier` and `password` to be able to access Strapi servers where authentication is required |
 
 ## How to query
 
