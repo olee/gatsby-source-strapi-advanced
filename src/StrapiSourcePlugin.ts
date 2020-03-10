@@ -1,10 +1,15 @@
+import crypto from 'crypto';
+// import fs from 'fs';
+
 import axios, { AxiosRequestConfig } from 'axios';
-import { SourceNodesArgs, NodeInput } from 'gatsby';
 import pluralize from 'pluralize';
 import { createRemoteFileNode } from 'gatsby-source-filesystem';
 import createNodeHelpers from 'gatsby-node-helpers';
 
-import * as Strapi from './strapi-types';
+import /*type*/ { NodeInput, CreateSchemaCustomizationArgs, ParentSpanPluginArgs, GatsbyGraphQLType } from 'gatsby';
+import /*type*/ { ComposeFieldConfigMap, ComposeFieldConfig } from 'graphql-compose';
+import /*type*/ { GraphQLResolveInfo, GraphQLAbstractType } from 'graphql';
+import /*type*/ * as Strapi from './strapi-types';
 
 export interface LoginData {
     identifier: string;
@@ -26,48 +31,103 @@ interface StrapiEntity {
 }
 
 const DEFAULT_API_URL = 'http://localhost:1337';
-const DEFAULT_QUERY_LIMIT = 100;
+const DEFAULT_PAGE_SIZE = 100;
+const TYPE_PREFIX = 'Strapi';
 
-const { createNodeFactory } = createNodeHelpers({
-    typePrefix: 'Strapi',
-});
+const { createNodeFactory } = createNodeHelpers({ typePrefix: TYPE_PREFIX });
+
+// Node fields used internally by Gatsby.
+const RESTRICTED_NODE_FIELDS = [
+    `id`,
+    `children`,
+    `parent`,
+    `fields`,
+    `internal`,
+];
 
 const capitalize = (s: string) => s[0].toUpperCase() + s.slice(1);
 
+const hashString = (data: string) => crypto
+    .createHash(`md5`)
+    .update(data)
+    .digest(`hex`);
+
+const hashData = (data: any) => hashString(JSON.stringify(data));
+
 export default class StrapiSourcePlugin {
 
-    private reporter = this.sourceArgs.reporter;
-    private cache = this.sourceArgs.cache;
-    private store = this.sourceArgs.store;
+    private reporter = this.args.reporter;
+    private cache = this.args.cache;
 
-    private createNode = this.sourceArgs.boundActionCreators.createNode;
-    private touchNode = this.sourceArgs.boundActionCreators.touchNode;
-    private getNode = this.sourceArgs.getNode as (id: string) => Node;
+    private getNode = this.args.getNode as (id: string) => Node;
+    private createNode = this.args.boundActionCreators.createNode;
+    private touchNode = this.args.boundActionCreators.touchNode;
 
     private token?: string;
     private requestConfig?: AxiosRequestConfig;
 
-    private contentTypes!: Map<string, Strapi.EntityType>;
-    private componentTypes!: Map<string, Strapi.EntityType>;
+    private gatsbyToStrapiType = new Map<string, string>();
+    private strapiToGatsbyType = new Map<string, string>();
+
+    private contentTypes!: Strapi.EntityType[];
+    private contentTypeMap!: Map<string, Strapi.EntityType>;
+    private componentTypeMap!: Map<string, Strapi.EntityType>;
+
+    private graphqlTypes = new Map<string, GatsbyGraphQLType | undefined>();
+
+    private apiURL: string;
+    private pageSize: number;
+    private loginData?: LoginData;
+    private allowedTypes?: string[];
+    private excludedTypes: string[];
+
+    private initialized = false;
 
     constructor(
-        private sourceArgs: SourceNodesArgs,
-        private options: StrapiPluginOptions,
+        private args: ParentSpanPluginArgs,
+        options: StrapiPluginOptions,
     ) {
+        this.apiURL = options.apiURL || DEFAULT_API_URL;
+        this.pageSize = options.pageSize || DEFAULT_PAGE_SIZE;
+        this.loginData = options.loginData;
+        this.allowedTypes = options.allowedTypes;
+        this.excludedTypes = options.excludedTypes || ['user', 'role', 'permission'];
+    }
+
+    public getTypeName(type: Strapi.EntityType) {
+        const node = createNodeFactory(type.apiID, n => n)({});
+        return node.internal.type;
+        // return TYPE_PREFIX + capitalize(type.apiID);
+    }
+
+    public async init() {
+        // Handle authentication
+        await this.login();
+
+        // Fetch content types & components
+        await this.fetchTypes();
+
+        // Filter mapped types
+        this.contentTypes = Array.from(this.contentTypeMap.values()).filter(x =>
+            !this.excludedTypes.includes(x.apiID) &&
+            (!this.allowedTypes || this.allowedTypes.includes(x.apiID))
+        );
+
+        this.initialized = true;
     }
 
     private async login() {
-        if (!this.options.loginData)
+        if (!this.loginData)
             return;
 
-        if (typeof this.options.loginData.identifier !== 'string' || this.options.loginData.identifier.length === 0)
+        if (typeof this.loginData.identifier !== 'string' || this.loginData.identifier.length === 0)
             throw new StrapiSourceError('Empty identifier');
 
-        if (typeof this.options.loginData.password !== 'string' || this.options.loginData.password.length === 0)
+        if (typeof this.loginData.password !== 'string' || this.loginData.password.length === 0)
             throw new StrapiSourceError('Empty password');
 
         try {
-            const loginResponse = await axios.post(`${this.options.apiURL}/auth/local`, this.options.loginData);
+            const loginResponse = await axios.post(`${this.apiURL}/auth/local`, this.loginData);
 
             if (typeof loginResponse.data?.jwt !== 'string')
                 throw new StrapiSourceError('Invalid response: ' + JSON.stringify(loginResponse.data));
@@ -84,41 +144,29 @@ export default class StrapiSourcePlugin {
     }
 
     public async sourceNodes() {
+        if (!this.initialized)
+            await this.init();
         try {
-            // Handle authentication
-            await this.login();
-
             const fetchActivity = this.reporter.activityTimer(`Fetched Strapi Data`);
             fetchActivity.start();
             try {
-                // Fetch content types & components
-                const contentTypes = await this.fetchTypes();
-
-                const allowedTypes = this.options.allowedTypes;
-                const excludedTypes = this.options.excludedTypes || ['user', 'role', 'permission'];
-
-                const filteredTypes = contentTypes.filter(x =>
-                    !excludedTypes.includes(x.apiID) &&
-                    (!allowedTypes || allowedTypes.includes(x.apiID))
-                );
-
-                await Promise.all(filteredTypes.map(async (contentType) => {
+                await Promise.all(this.contentTypes.map(async (contentType) => {
                     // Fetch entities
                     const entities = await this.fetchEntities(contentType);
 
                     // Create node-creator
-                    const typeName = capitalize(contentType.apiID);
-                    const nodeFactory = createNodeFactory(typeName, node => {
-                        node.id = `${typeName}_${node.strapiId}`;
+                    const fullTypeName = this.getTypeName(contentType);
+                    this.gatsbyToStrapiType.set(fullTypeName, contentType.apiID);
+                    this.strapiToGatsbyType.set(contentType.apiID, fullTypeName);
+
+                    const nodeFactory = createNodeFactory(contentType.apiID, node => {
+                        node.id = `${contentType.apiID}_${node.strapiId}`;
                         return node;
                     });
 
                     await Promise.all(entities.map(async (entity) => {
                         try {
                             const data = await this.mapEntityType(contentType, entity);
-
-                            // await this.extractFields(data);
-                            // const data = data;
 
                             // if (contentType.apiID === 'article' && data.id === 1) {
                             //     console.log(data);
@@ -137,13 +185,8 @@ export default class StrapiSourcePlugin {
                         }
                     }));
                 }));
-
-                // } catch (err) {
-                //     console.error(err);
-                //     throw err;
             } finally {
                 fetchActivity.end();
-                // process.exit();
             }
         } catch (error) {
             if (error instanceof StrapiSourceError) {
@@ -179,7 +222,7 @@ export default class StrapiSourcePlugin {
             case 'datetime':
                 return [key, data];
             case 'richtext':
-                return [key, data];
+                return this.mapRichtext(attribute, key, data as string | null);
             case 'media':
                 return await this.mapMedia(key, data as Strapi.Media);
             case 'relation':
@@ -189,6 +232,29 @@ export default class StrapiSourcePlugin {
             case 'dynamiczone':
                 return await this.mapDynamicZone(attribute, key, data);
         }
+    }
+
+    private async mapRichtext(attribute: Strapi.RichtextAttribute, key: string, data: string | null): Promise<[string, unknown]> {
+        if (typeof data !== 'string')
+            return [`${key}___NODE`, undefined];
+
+        const contentDigest = hashString(data);
+
+        const markdownNode: NodeInput = {
+            id: this.args.createNodeId(contentDigest),
+            // parent: node.id,
+            text: data,
+            internal: {
+                type: 'StrapiMarkdownString',
+                mediaType: 'text/markdown',
+                content: data,
+                contentDigest,
+            }
+        };
+        this.createNode(markdownNode);
+        // this.createParentChildLink({ parent: node, child: fieldNode as Node });
+
+        return [`${key}___NODE`, markdownNode.id];
     }
 
     private async mapDynamicZone(attribute: Strapi.DynamiczoneAttribute, key: string, items: unknown): Promise<[string, unknown]> {
@@ -202,16 +268,17 @@ export default class StrapiSourcePlugin {
             if (typeof typeName !== 'string')
                 throw new StrapiSourceError(`Missing __component field`);
 
-            const type = this.componentTypes.get(typeName);
+            const type = this.componentTypeMap.get(typeName);
             if (!type)
                 throw new StrapiSourceError(`Could not find component type ${typeName}`);
 
             // Transform component data
             const itemData = await this.mapEntityType(type, item);
 
-            // Attach component information
-            itemData.$componentType = type.uid;
-            itemData.$componentName = type.name;
+            // Assign internal type discriminator to differentiate between types
+            itemData.internal = { type: this.getTypeName(type) };
+            itemData._type = this.getTypeName(type);
+
             return itemData;
         }));
         return [key, mappedItems];
@@ -221,7 +288,7 @@ export default class StrapiSourcePlugin {
         if (data === undefined || data === null)
             return [key, data];
 
-        const type = this.componentTypes.get(attribute.component);
+        const type = this.componentTypeMap.get(attribute.component);
         if (!type)
             throw new StrapiSourceError(`Could not find component type ${attribute.component}`);
 
@@ -248,7 +315,7 @@ export default class StrapiSourcePlugin {
         if (typeof data !== 'object')
             throw new StrapiSourceError(`Expected object for field ${key}, but got ${typeof data}`);
 
-        const type = this.contentTypes.get(attribute.model);
+        const type = this.contentTypeMap.get(attribute.model);
         if (!type)
             throw new StrapiSourceError(`Could not find relation type ${attribute.model}`);
 
@@ -272,16 +339,12 @@ export default class StrapiSourcePlugin {
 
         try {
             // full media url
-            const url = `${media.url.startsWith('http') ? '' : this.options.apiURL}${media.url}`;
+            const url = `${media.url.startsWith('http') ? '' : this.apiURL}${media.url}`;
             const fileNode = await createRemoteFileNode({
-                ...this.sourceArgs,
+                ...this.args,
                 createNode: this.createNode,
                 auth: this.token as any,
                 url,
-                // store: this.sourceArgs.store,
-                // cache: this.sourceArgs.cache,
-                // createNodeId: this.sourceArgs.createNodeId,
-                // reporter: this.sourceArgs.reporter,
             });
             // If we don't have cached data, download the file
             if (fileNode) {
@@ -298,16 +361,16 @@ export default class StrapiSourcePlugin {
     }
 
     private async fetchTypes() {
-        const contentTypes = await this.fetch<{ data: Strapi.EntityType[]; }>('content-manager/content-types');
-        const componentTypes = await this.fetch<{ data: Strapi.EntityType[]; }>('content-manager/components');
-        this.contentTypes = new Map(contentTypes.data.map(t => [t.apiID, t]));
-        this.componentTypes = new Map(componentTypes.data.map(t => [t.uid, t]));
-        return contentTypes.data;
+        const [contentTypes, components] = await Promise.all([
+            this.fetch<{ data: Strapi.EntityType[]; }>('content-manager/content-types'),
+            this.fetch<{ data: Strapi.EntityType[]; }>('content-manager/components'),
+        ]);
+        this.contentTypeMap = new Map(contentTypes.data.map(t => [t.apiID, t]));
+        this.componentTypeMap = new Map(components.data.map(t => [t.uid, t]));
     }
 
     private async fetch<T>(path: string) {
-        const apiURL = this.options.apiURL || DEFAULT_API_URL;
-        const url = `${apiURL}/${path}`;
+        const url = `${this.apiURL}/${path}`;
         this.reporter.info(`Strapi get: ${path}`);
         try {
             const documents = await axios.get<T>(url, this.requestConfig);
@@ -325,20 +388,150 @@ export default class StrapiSourcePlugin {
         }
         else {
             const endpoint = pluralize(contentType.apiID);
-            const pageSize = this.options.pageSize || DEFAULT_QUERY_LIMIT;
             let index = 0;
             let result: StrapiEntity[] = [];
             while (true) {
-                const query = `${endpoint}?_limit=${pageSize}&_start=${index}`;
+                const query = `${endpoint}?_limit=${this.pageSize}&_start=${index}`;
                 const response = await this.fetch<StrapiEntity[]>(query);
                 result.push(...response);
-                if (response.length < pageSize)
+                if (response.length < this.pageSize)
                     return result;
-                index += pageSize;
+                index += this.pageSize;
             }
         }
     }
 
+    public async createSchemaCustomization(args: CreateSchemaCustomizationArgs) {
+        if (!this.initialized)
+            await this.init();
+
+        for (const ct of this.contentTypes) {
+            this.defineType(ct);
+        }
+
+        const typeDefs = Array.from(this.graphqlTypes.values()).filter(Boolean).map(x => x!);
+
+        // Add StrapiMarkdownString definition
+        typeDefs.push(this.args.schema.buildObjectType({
+            name: 'StrapiMarkdownString',
+            interfaces: ['Node'],
+            fields: {
+                text: { type: 'String!' },
+            },
+        }));
+
+        this.args.actions.createTypes(typeDefs);
+    }
+
+    private defineType(ct: Strapi.EntityType) {
+        const fullTypeName = this.getTypeName(ct);
+        if (this.graphqlTypes.has(fullTypeName))
+            return this.graphqlTypes.get(fullTypeName);
+
+        this.graphqlTypes.set(fullTypeName, undefined);
+
+        const typeDef = this.args.schema.buildObjectType({
+            name: fullTypeName,
+            interfaces: ct.schema.modelType === 'contentType' ? ['Node'] : undefined,
+            // extensions: { infer: false }, // Disable inference
+            fields: this.mapEntityTypeToType(ct),
+        });
+
+        this.graphqlTypes.set(fullTypeName, typeDef);
+        return typeDef;
+    }
+
+    private mapEntityTypeToType(type: Strapi.EntityType): ComposeFieldConfigMap<any, any> {
+        return Object.fromEntries(
+            Object.entries(type.schema.attributes)
+                .map(([key, attribute]) => [key, this.mapAttributeToType(type, attribute, key)])
+                .filter(x => x[1])
+        );
+    }
+
+    private mapAttributeToType(type: Strapi.EntityType, attribute: Strapi.Attribute, key: string): ComposeFieldConfig<any, any> | undefined {
+        const reqSuffix = attribute.required ? '!' : '';
+        switch (attribute.type) {
+            case 'string':
+            case 'enumeration':
+                return { type: 'String' + reqSuffix };
+            case 'richtext':
+                return { type: 'StrapiMarkdownString' + reqSuffix };
+            case 'datetime':
+            case 'timestamp':
+                return { type: 'Date' + reqSuffix };
+            case 'integer':
+                return { type: 'Int' + reqSuffix };
+            case 'media':
+                return { type: 'File' + reqSuffix };
+            case 'relation':
+                return this.mapRelationToType(attribute, key);
+            case 'component':
+                return this.mapComponentToType(attribute, key);
+            // case 'dynamiczone':
+            //     return this.mapDynamicZoneToType(type, attribute, key);
+        }
+    }
+
+    private mapRelationToType(attribute: Strapi.RelationAttribute, key: string): ComposeFieldConfig<any, any> | undefined {
+        const type = this.contentTypeMap.get(attribute.model);
+        if (!type) {
+            console.warn(`Relation field ${key} type ${attribute.model} not found`);
+            return;
+        }
+        this.defineType(type);
+        const typeName = this.getTypeName(type);
+        console.log(`Defining type for field ${key} as ` + typeName);
+        return { type: typeName };
+    }
+
+    private mapComponentToType(attribute: Strapi.ComponentAttribute, key: string): ComposeFieldConfig<any, any> | undefined {
+        const type = this.contentTypeMap.get(attribute.component);
+        if (!type) {
+            console.warn(`Component field ${key} type ${attribute.component} not found`);
+            return;
+        }
+        this.defineType(type);
+        const typeName = this.getTypeName(type);
+        // console.log(`Defining type for field ${key} as ` + typeName);
+        return { type: typeName };
+    }
+
+    private mapDynamicZoneToType(entityType: Strapi.EntityType, attribute: Strapi.DynamiczoneAttribute, key: string): ComposeFieldConfig<any, any> | undefined {
+        const types = attribute.components
+            .map(c => {
+                const type = this.componentTypeMap.get(c);
+                if (!type)
+                    console.warn(`Dynamiczone field ${key} type ${c} not found`);
+                return type!;
+            })
+            .filter(Boolean)
+            .map(x => this.defineType(x!)!);
+
+        // Build union type
+        const unionTypeName = `StrapiUnion_${this.getTypeName(entityType)}_${key}`;
+        const unionType = this.args.schema.buildUnionType({
+            name: unionTypeName,
+            types: types.map(x => x.config.name),
+        });
+        this.graphqlTypes.set(unionTypeName, unionType);
+
+        // console.info(`Dynamiczone field ${key} using union type ${unionTypeName}`);
+        return { type: `[${unionTypeName}!]!` };
+    }
+
+}
+
+type GraphQlType = 'String' | 'Int' | 'Boolean' | 'File' | string;
+
+interface GraphQlField {
+    type: GraphQlType;
+    args?: Record<string, GraphQlArg>;
+    resolve?: (source: any, fieldArgs: Record<string, string | undefined>) => any;
+}
+
+interface GraphQlArg {
+    type: GraphQlType;
 }
 
 class StrapiSourceError extends Error { }

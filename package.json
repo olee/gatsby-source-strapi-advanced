@@ -3,7 +3,7 @@
   "description": "Gatsby source plugin for strapi servers",
   "author": "Björn Zeutzheim <npm@bzeutzheim.de> (https://github.com/olee)",
   "license": "MIT",
-  "version": "0.0.2",
+  "version": "0.0.4",
   "repository": "https://github.com/olee/gatsby-source-strapi-advanced",
   "keywords": [
     "gatsby",

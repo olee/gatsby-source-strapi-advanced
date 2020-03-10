@@ -1,12 +1,17 @@
-import { GatsbyNode, SourceNodesArgs, PluginOptions } from 'gatsby';
+import { SourceNodesArgs, PluginOptions, CreateSchemaCustomizationArgs } from 'gatsby';
 
 import StrapiSourcePlugin from './StrapiSourcePlugin';
 
-export const sourceNodes: GatsbyNode['sourceNodes'] = (sourceArgs: SourceNodesArgs, options: PluginOptions) => {
-    const source = new StrapiSourcePlugin(sourceArgs, options);
-    return source.sourceNodes();
-};
+let plugin: StrapiSourcePlugin;
 
-// export function onPostBootstrap() {
-//     process.exit();
-// }
+export function sourceNodes(args: SourceNodesArgs, options: PluginOptions) {
+    if (!plugin)
+        plugin = new StrapiSourcePlugin(args, options);
+    return plugin.sourceNodes();
+}
+
+export function createSchemaCustomization(args: CreateSchemaCustomizationArgs, options: PluginOptions) {
+    if (!plugin)
+        plugin = new StrapiSourcePlugin(args, options);
+    return plugin.createSchemaCustomization(args);
+}
