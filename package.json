@@ -18,7 +18,7 @@
     "build": "npx -q shx rm *.js && tsc"
   },
   "dependencies": {
-    "axios": "^0.19.2",
+    "axios": "^0.21.1",
     "gatsby-node-helpers": "^0.3.0",
     "pluralize": "^8.0.0"
   },
